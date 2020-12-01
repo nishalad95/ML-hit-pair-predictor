@@ -13,17 +13,44 @@ from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.metrics import roc_curve, roc_auc_score, precision_recall_curve, auc, f1_score, confusion_matrix, classification_report
 from utils import plot_confusion_matrix, evaluate_performance
+from argparse import ArgumentParser
+
+# flags: mc data, bandwidths file, bandwidth method/column
+
+
+parser = ArgumentParser(
+        description="KDE-based classifier training and predictions pipeline for pixel-barrel doublets")
+parser.add_argument(
+        '--data',
+	    '-d',
+        help="MC training data file path")
+parser.add_argument(
+        '--bandwidths',
+        '-b',
+        help='optimum barrel KDE bandwidths file path')
+parser.add_argument(
+        '--method',
+        '-m',
+        help='bandwith method')
+parser.add_argument(
+        '--tripletvalidation',
+        '-t',
+        default=False,
+        help='Execute triplet validation stage')
+
+args = parser.parse_args()
+training_data = args.data
+bandwidths = args.bandwidths
+method = args.method
+triplet_validation = args.tripletvalidation
 
 
 path = str(pathlib.Path().absolute())
 
 
-# flags: mc data, bandwidths file, bandwidth method/column
-
-
 # Load the data and form pixel-barrel doublets
 print("Processing data & forming doublets...")
-td = TrackData("../data/training_data.tar.gz")
+td = TrackData(training_data)
 td.read_and_merge_data()
 training_df = td.calculate_cott()
 pix_bar_layers = set([0, 1, 2, 3])
@@ -49,7 +76,7 @@ weta_large = td.weta_band(pix_barrel_doublets, 2.8, 1000, balanced=True)
 
 
 # Downsample high statistics bands:
-max_size = 20000
+max_size = 30000
 weta04 = td.downsample(weta04, max_size)
 weta06 = td.downsample(weta06, max_size)
 weta08 = td.downsample(weta08, max_size)
@@ -62,8 +89,8 @@ weta16 = td.downsample(weta16, max_size)
 # Define variables
 weta = [0.0, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8]
 print("Reading optimum bandwidths...")
-optimal_kde_bw = pd.read_csv("barrel_optimum_kde_bandwidths.csv")
-bandwidths = optimal_kde_bw['ss_corr_avg'].tolist()
+optimal_kde_bw = pd.read_csv(bandwidths)
+bandwidths = optimal_kde_bw[method].tolist()
 accept_reject_validation = pd.DataFrame(columns=['weta', 'tau', 'predictions', 'targets'])
 thresholds = []
 
@@ -170,5 +197,214 @@ y_true = accept_reject_validation['targets'].to_list()
 evaluate_performance(y_true, y_pred, ['0', '1'])
 
 
-# if triplet_validation:
-    # execute triplet tracking efficiency metrics
+
+def form_feature_matrix(df):
+    features = pd.DataFrame({
+            "label": df['label'],
+            "inner_doublet": df['inner_doublet'],
+            "outer_doublet": df['outer_doublet'],
+            "cot(t1)": df['cot(t1)'],
+            "|cot(t1)|": df['|cot(t1)|'],
+            "cot(t2)": df['cot(t2)'],
+            "|cot(t2)|": df['|cot(t2)|'],
+            "weta2": df['weta2'],
+            })
+
+    inner_doublets = pd.DataFrame({
+                "label": features['label'], 
+                "cot(t)": features['cot(t1)'],
+                "tau": features['|cot(t1)|'],
+                "weta": features['weta2'],
+                "doublet": 'i',
+                "target": features['inner_doublet'],
+                 })
+
+    outer_doublets = pd.DataFrame({
+                "label": features['label'], 
+                "cot(t)": features['cot(t2)'],
+                "tau": features['|cot(t2)|'],
+                "weta": features['weta2'],
+                "doublet": 'o',
+                "target": features['outer_doublet'],
+                 })
+
+    feature_matrix = pd.concat([inner_doublets, outer_doublets], ignore_index=False)
+
+    return feature_matrix
+
+
+def binomial_error(k_t, N_t):
+    return (1 / N_t) * np.sqrt(k_t * (1 - (k_t / N_t)))
+
+
+# Execute triplet validation
+if triplet_validation:
+
+    print("\nExecuting triplet seed validation...")
+    triplet_df = training_df.head(300000)
+    all_doublets = form_feature_matrix(triplet_df)
+
+
+    # weta bands
+    weta04_trk = td.weta_band(all_doublets, 0.0, 0.4)
+    weta06_trk = td.weta_band(all_doublets, 0.4, 0.6)
+    weta08_trk = td.weta_band(all_doublets, 0.6, 0.8)
+    weta10_trk = td.weta_band(all_doublets, 0.8, 1.0)
+    weta12_trk = td.weta_band(all_doublets, 1.0, 1.2)
+    weta14_trk = td.weta_band(all_doublets, 1.2, 1.4)
+    weta16_trk = td.weta_band(all_doublets, 1.4, 1.6)
+    weta18_trk = td.weta_band(all_doublets, 1.6, 1.8)
+    weta20_trk = td.weta_band(all_doublets, 1.8, 2.0)
+    weta22_trk = td.weta_band(all_doublets, 2.0, 2.2)
+    weta24_trk = td.weta_band(all_doublets, 2.2, 2.4)
+    weta26_trk = td.weta_band(all_doublets, 2.4, 2.6)
+    weta28_trk = td.weta_band(all_doublets, 2.6, 2.8)
+    weta_large_trk = td.weta_band(all_doublets, 2.8, 1000)
+
+
+    # Initialize variables:
+    accept_reject_triplets = pd.DataFrame(columns=['label', 'tau', 'weta', 
+                                                    'doublet', 'target', 'predictions'])
+
+    X_trk_data = [weta04_trk, weta06_trk, weta08_trk, weta10_trk, 
+                weta12_trk, weta14_trk, weta16_trk, weta18_trk, 
+                weta20_trk, weta22_trk, weta24_trk, weta26_trk]
+
+    Y_trk_data = [weta04_trk.loc[:,['target']], weta06_trk.loc[:,['target']], 
+                weta08_trk.loc[:,['target']], weta10_trk.loc[:,['target']], 
+               weta12_trk.loc[:,['target']], weta14_trk.loc[:,['target']],
+               weta16_trk.loc[:,['target']], weta18_trk.loc[:,['target']], 
+               weta20_trk.loc[:,['target']], weta22_trk.loc[:,['target']], 
+               weta24_trk.loc[:,['target']], weta26_trk.loc[:,['target']]]
+
+    seed_filter_eff = []
+    tot_rejection_rate = []
+    seed_filtering_error = []
+    tot_rejection_error = []
+
+    for i, kde in enumerate(clfs):
+        
+        w = weta[i+1]
+        accept_reject = X_trk_data[i].copy()
+        x = X_trk_data[i].loc[:,['tau']]
+        y = Y_trk_data[i]
+        threshold = thresholds[i]
+        
+        # make predictions
+        print("Performing kde predictions on band: ", str(w), "\nUsing threshold: ", str(threshold))
+        y_trk_pred = kde.predict(x, threshold)
+        print("Predictions for weta band: " + str(w) + " complete!")
+        
+        # doublet form: predictions for each constituent doublet
+        accept_reject['predictions'] = y_trk_pred
+        accept_reject_triplets = pd.concat([accept_reject_triplets, accept_reject], ignore_index=False, sort=False)       
+
+        # calc confusion matrix
+        label1 = accept_reject.loc[accept_reject.label == 1]
+        y_target = label1.loc[:,['target']]
+        y_predicted = label1['predictions'].tolist()
+        tn, fp, fn, tp = confusion_matrix(y_target, y_predicted, labels=[0,1]).ravel()
+        TPR, TNR = tp / (tp + fn), tn / (tn + fp)
+        FPR, FNR = 1 - TNR, 1 - TPR
+        print("TPR: %.3f, TNR: %.3f, \nFPR: %.3f, FNR: %.3f" % (TPR, TNR, FPR, FNR))
+        
+        # triplet form:
+        triplets_band = triplet_df.loc[(triplet_df['weta2'] > weta[i]) & (triplet_df['weta2'] <= weta[i+1])]
+        suc_triplets_band = triplets_band.loc[triplets_band.label == 1]
+        
+        # 1. pb middle hits
+        pb_middle_track_prop = suc_triplets_band.loc[(suc_triplets_band.isPixel2 == 1) 
+                                                    & (suc_triplets_band.layer2 <= 3)]
+        # 2. other middle hits - by default we accept these for now
+        other_middle_hits_track_prop = suc_triplets_band.loc[(suc_triplets_band.layer2 > 3) 
+                                                            & (suc_triplets_band.isPixel2 == 1)]    
+        
+        # from pb middle hits, accept those triplets with prediction of both doublets == 1
+        inner_accepted = accept_reject.loc[(accept_reject.doublet == 'i') & (accept_reject.predictions == 1)]
+        outer_accepted = accept_reject.loc[(accept_reject.doublet == 'o') & (accept_reject.predictions == 1)]
+        common_idx = inner_accepted.index.intersection(outer_accepted.index).to_list()
+        kde_accepted_track_prop = pb_middle_track_prop[pb_middle_track_prop.index.isin(common_idx)]
+        
+        
+        # seed filtering efficiency = TPR = TP / TP + FN
+        good_accepted_triplets = len(other_middle_hits_track_prop) + len(kde_accepted_track_prop)  
+        all_accepted_triplets = len(suc_triplets_band)
+        seed_filtering_efficiency = (good_accepted_triplets / all_accepted_triplets) * 100
+        s_error = binomial_error(good_accepted_triplets, all_accepted_triplets) * 100
+        # print("Seed filtering efficiency: " + str(seed_filtering_efficiency * 100) + "%")
+        print("Seed filtering efficiency: {:.{}f} % with {:.{}f} % error "
+            .format(seed_filtering_efficiency, 3, s_error, 3))
+        
+
+        # total rejection rate: all_rejected_triplets consist of triplets with doublet predictions not 1 & 1
+        all_rejected_triplets = triplets_band.drop(common_idx)
+        total_rejection_rate = (len(all_rejected_triplets) / len(triplets_band)) * 100
+        t_error = binomial_error(len(all_rejected_triplets), len(triplets_band)) * 100
+        # print("Total rejection rate: " + str(total_rejection_rate * 100) + " % \n")
+        print("Total rejection rate: {:.{}f} % with {:.{}f} % error \n"
+            .format(total_rejection_rate, 3, t_error, 3))
+        
+        # append to arrays
+        seed_filter_eff.append(seed_filtering_efficiency)
+        tot_rejection_rate.append(total_rejection_rate)
+        seed_filtering_error.append(s_error)
+        tot_rejection_error.append(t_error)
+
+    print("Triplets tracking efficiency evaluation complete!")
+    
+    
+    seed_filter_eff = np.array(seed_filter_eff)
+    tot_rejection_rate = np.array(tot_rejection_rate)
+    seed_filtering_error = np.array(seed_filtering_error)
+    tot_rejection_error = np.array(tot_rejection_error)
+
+
+    # plot and save triplet validation metrics as a function of track params
+    plt.figure(figsize=(10,7))
+    plt.errorbar(weta[0:12], seed_filter_eff, yerr=seed_filtering_error, fmt='o', label='seed filtering efficiency', c='orange')
+    plt.errorbar(weta[0:12], tot_rejection_rate, yerr=tot_rejection_error, fmt='o', label='total rejection rate', c='blue')
+    plt.title("Triplet tracking efficiency metrics for KDE Classifier on barrel doublets")
+    plt.ylim([0, 100])
+    plt.xlabel('weta2')
+    plt.ylabel('%')
+    plt.legend(loc='best')
+    plt.savefig('pixel-barrel-triplet-validation.png')
+
+
+
+    # Overall triplet tracking efficiency metrics:
+    # triplet form:
+    suc_triplets = triplet_df.loc[triplet_df.label == 1]
+
+    # 1. pb middle hits
+    pb_middle_track_prop = suc_triplets.loc[(suc_triplets.isPixel2 == 1) 
+                                                & (suc_triplets.layer2 <= 3)]
+    # 2. other middle hits - by default we accept these for now
+    other_middle_hits_track_prop = suc_triplets.loc[(suc_triplets.layer2 > 3) 
+                                                        & (suc_triplets.isPixel2 == 1)]    
+
+    # from pb middle hits, accept those triplets with prediction of both doublets == 1
+    inner_accepted = accept_reject_triplets.loc[(accept_reject_triplets.doublet == 'i') & (accept_reject_triplets.predictions == 1)]
+    outer_accepted = accept_reject_triplets.loc[(accept_reject_triplets.doublet == 'o') & (accept_reject_triplets.predictions == 1)]
+    common_idx = inner_accepted.index.intersection(outer_accepted.index).to_list()
+    kde_accepted_track_prop = pb_middle_track_prop[pb_middle_track_prop.index.isin(common_idx)]
+
+
+    # seed filtering efficiency = TPR = TP / TP + FN
+    good_accepted_triplets = len(other_middle_hits_track_prop) + len(kde_accepted_track_prop)  
+    all_accepted_triplets = len(suc_triplets)
+    seed_filtering_efficiency = (good_accepted_triplets / all_accepted_triplets) * 100
+    s_error = binomial_error(good_accepted_triplets, all_accepted_triplets) * 100
+    #     print("Seed filtering efficiency: " + str(seed_filtering_efficiency * 100) + "%")
+    print("Seed filtering efficiency: {:.{}f} % with {:.{}f} % error "
+        .format(seed_filtering_efficiency, 3, s_error, 3))
+
+
+    # total rejection rate: all_rejected_triplets consist of triplets with doublet predictions not 1 & 1
+    all_rejected_triplets = triplet_df.drop(common_idx)
+    total_rejection_rate = (len(all_rejected_triplets) / len(triplet_df)) * 100
+    t_error = binomial_error(len(all_rejected_triplets), len(triplet_df)) * 100
+    #     print("Total rejection rate: " + str(total_rejection_rate * 100) + " % \n")
+    print("Total rejection rate: {:.{}f} % with {:.{}f} % error \n"
+        .format(total_rejection_rate, 3, t_error, 3))
+
