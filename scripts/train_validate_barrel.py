@@ -15,8 +15,6 @@ from sklearn.metrics import roc_curve, roc_auc_score, precision_recall_curve, au
 from utils import plot_confusion_matrix, evaluate_performance
 from argparse import ArgumentParser
 
-# flags: mc data, bandwidths file, bandwidth method/column
-
 
 parser = ArgumentParser(
         description="KDE-based classifier training and predictions pipeline for pixel-barrel doublets")
@@ -28,10 +26,6 @@ parser.add_argument(
         '--bandwidths',
         '-b',
         help='optimum barrel KDE bandwidths file path')
-parser.add_argument(
-        '--method',
-        '-m',
-        help='bandwith method')
 parser.add_argument(
         '--tripletvalidation',
         '-t',
@@ -72,7 +66,7 @@ weta22 = td.weta_band(pix_barrel_doublets, 2.0, 2.2, balanced=True)
 weta24 = td.weta_band(pix_barrel_doublets, 2.2, 2.4, balanced=True)
 weta26 = td.weta_band(pix_barrel_doublets, 2.4, 2.6, balanced=True)
 weta28 = td.weta_band(pix_barrel_doublets, 2.6, 2.8, balanced=True)
-weta_large = td.weta_band(pix_barrel_doublets, 2.8, 1000, balanced=True)
+weta_large = td.weta_band(pix_barrel_doublets, 2.8, 100, balanced=True)
 
 
 # Downsample high statistics bands:
@@ -90,7 +84,7 @@ weta16 = td.downsample(weta16, max_size)
 weta = [0.0, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8]
 print("Reading optimum bandwidths...")
 optimal_kde_bw = pd.read_csv(bandwidths)
-bandwidths = optimal_kde_bw[method].tolist()
+bandwidths = optimal_kde_bw['ss_corr_avg'].tolist()
 accept_reject_validation = pd.DataFrame(columns=['weta', 'tau', 'predictions', 'targets'])
 thresholds = []
 

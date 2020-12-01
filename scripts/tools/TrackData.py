@@ -89,6 +89,36 @@ class TrackData:
         doublets.rename(columns={'|cot(t1)|':'tau', 'weta2': 'weta'}, inplace=True)
     
         return doublets
+    
+
+    def generate_endcap_doublets(self, df, pix_bar_layers, pix_ec_layers):
+        # select triplets with inner spacepoint in barrel, middle spacepoint in endcap 
+        # and successful track propagation
+        pixel_region_triplets = df[(df.layer2.isin(pix_ec_layers)) & 
+                                        (df.layer1.isin(pix_bar_layers)) &
+                                        (df.label == 1)] 
+
+        # Good doublets:
+        good_inner = pixel_region_triplets[pixel_region_triplets.inner_doublet == 1]
+        good_inner_doublets = good_inner[['weta1', '|cot(t1)|', 'z1', 'r1']]
+
+        # Bad doublets:
+        bad_inner = pixel_region_triplets[pixel_region_triplets.inner_doublet == 0]
+        bad_inner_doublets = bad_inner[['weta1', '|cot(t1)|', 'z1', 'r1']]
+
+        # Ground truth:
+        good_inner_doublets.insert(0, 'target', 1)
+        bad_inner_doublets.insert(0, 'target', 0)
+
+        # For tracking efficiency
+        good_inner_doublets.insert(1, 'doublet', 'i')
+        bad_inner_doublets.insert(1, 'doublet', 'i')
+
+        # # Merge together:
+        doublets = pd.concat([good_inner_doublets, bad_inner_doublets], ignore_index=False)
+        doublets.rename(columns={'|cot(t1)|':'tau', 'weta1':'weta'}, inplace=True)
+        
+        return doublets
  
 
     def weta_band(self, df, start, end, balanced=False):
