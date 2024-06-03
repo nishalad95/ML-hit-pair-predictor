@@ -14,7 +14,4 @@ t: (bool) triplet validation stage, default value: `False`
 d: training data file format in `tar.gz` contaning csv files from MC simulation
 t: (bool) triplet validation stage, default value: `False`
 
-##### Optional Probability Calibration:
-
-#### Look-Up Table Formation:
 
