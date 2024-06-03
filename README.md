@@ -1,4 +1,4 @@
-### ML-Hit-Pair-Predictor
+### ML Hit Pair Predictor
 
 A ML-based algorithm for predicting whether doublet hit pairs belong to the same track, with the aim of reducing the number of fake triplet seeds in the HLT. The algorithm utilizes a Bayes classifier with Kernel Density Estimate, and is trained on ATLAS MC data.
 
